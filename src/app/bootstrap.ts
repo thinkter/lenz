@@ -1,3 +1,4 @@
+import { initializeFontSize } from "./fontSize";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import { setupVimScrollBindings } from "../keyboard/vimScroll";
@@ -17,6 +18,7 @@ async function initializeMarkdownView(): Promise<void> {
 export function bootstrapApp(): void {
   setupVimScrollBindings();
 
+  void initializeFontSize();
   void initializeMarkdownView();
 
   window.addEventListener("beforeunload", () => {

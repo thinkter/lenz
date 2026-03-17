@@ -1,17 +1,21 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
 const MARKDOWN_UPDATED_EVENT: &str = "markdown-updated";
 const MARKDOWN_WATCH_ERROR_EVENT: &str = "markdown-watch-error";
+const SETTINGS_FILE_NAME: &str = "settings.json";
+const DEFAULT_ZOOM_LEVEL: f64 = 1.0;
+const MIN_ZOOM_LEVEL: f64 = 0.5;
+const MAX_ZOOM_LEVEL: f64 = 2.0;
 
 #[derive(Clone)]
 struct MarkdownState(Arc<MarkdownStateInner>);
@@ -40,6 +44,12 @@ struct MarkdownWatchErrorEvent {
     path: Option<String>,
 }
 
+#[derive(Default, Deserialize, Serialize)]
+struct AppSettings {
+    font_size: Option<u16>,
+    zoom_level: Option<f64>,
+}
+
 #[tauri::command]
 fn get_markdown(state: State<'_, MarkdownState>) -> MarkdownResponse {
     let md = state.0.content.lock().unwrap().clone();
@@ -50,6 +60,69 @@ fn get_markdown(state: State<'_, MarkdownState>) -> MarkdownResponse {
         live_updates: path.is_some(),
         path,
     }
+}
+
+fn normalize_zoom_level(zoom_level: f64) -> f64 {
+    (zoom_level.clamp(MIN_ZOOM_LEVEL, MAX_ZOOM_LEVEL) * 10.0).round() / 10.0
+}
+
+fn settings_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let config_dir = app_handle
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Failed to resolve app config directory: {error}"))?;
+
+    fs::create_dir_all(&config_dir)
+        .map_err(|error| format!("Failed to create config directory: {error}"))?;
+
+    Ok(config_dir.join(SETTINGS_FILE_NAME))
+}
+
+fn load_settings(app_handle: &tauri::AppHandle) -> Result<AppSettings, String> {
+    let path = settings_path(app_handle)?;
+
+    if !path.exists() {
+        return Ok(AppSettings::default());
+    }
+
+    let contents =
+        fs::read_to_string(&path).map_err(|error| format!("Failed to read settings: {error}"))?;
+
+    serde_json::from_str::<AppSettings>(&contents)
+        .map_err(|error| format!("Failed to parse settings file `{}`: {error}", path.display()))
+}
+
+#[tauri::command]
+fn get_zoom_level(app_handle: tauri::AppHandle) -> Result<f64, String> {
+    let settings = load_settings(&app_handle)?;
+
+    if let Some(zoom_level) = settings.zoom_level {
+        return Ok(normalize_zoom_level(zoom_level));
+    }
+
+    if let Some(font_size) = settings.font_size {
+        let migrated_zoom_level = normalize_zoom_level(font_size as f64 / 16.0);
+        return Ok(migrated_zoom_level);
+    }
+
+    Ok(DEFAULT_ZOOM_LEVEL)
+}
+
+#[tauri::command]
+fn set_zoom_level(app_handle: tauri::AppHandle, zoom_level: f64) -> Result<f64, String> {
+    let normalized_zoom_level = normalize_zoom_level(zoom_level);
+    let path = settings_path(&app_handle)?;
+    let settings = AppSettings {
+        font_size: None,
+        zoom_level: Some(normalized_zoom_level),
+    };
+    let contents = serde_json::to_string_pretty(&settings)
+        .map_err(|error| format!("Failed to serialize settings: {error}"))?;
+
+    fs::write(&path, contents)
+        .map_err(|error| format!("Failed to write settings file `{}`: {error}", path.display()))?;
+
+    Ok(normalized_zoom_level)
 }
 
 fn non_flag_file_arg() -> Option<String> {
@@ -296,7 +369,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(markdown_state)
-        .invoke_handler(tauri::generate_handler![get_markdown])
+        .invoke_handler(tauri::generate_handler![
+            get_markdown,
+            get_zoom_level,
+            set_zoom_level
+        ])
         .setup(move |app| {
             start_markdown_watcher(app.handle().clone(), watcher_state.clone());
             Ok(())

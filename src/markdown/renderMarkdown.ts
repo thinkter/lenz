@@ -169,53 +169,27 @@ function applyPreviewChunks(content: string, cacheKey: string, previewChunks: st
   if (!container) return [];
 
   const fragment = document.createDocumentFragment();
+  const boundaries: ChunkBoundary[] = [];
   for (const [index, chunkHtml] of previewChunks.entries()) {
     const start = document.createComment(`chunk:${index}:start`);
     const chunkFragment = createChunkFragment(index, chunkHtml, true);
+    const target = chunkFragment.firstElementChild as HTMLElement | null;
     const end = document.createComment(`chunk:${index}:end`);
 
     fragment.append(start);
     fragment.append(chunkFragment);
     fragment.append(end);
-  }
-
-  container.replaceChildren(fragment);
-  lastRenderedContent = content;
-  lastRenderedCacheKey = cacheKey;
-
-  const appliedBoundaries: ChunkBoundary[] = [];
-  let childNode: ChildNode | null = container.firstChild;
-  for (let index = 0; index < previewChunks.length; index += 1) {
-    while (childNode && childNode.nodeType !== Node.COMMENT_NODE) {
-      childNode = childNode.nextSibling;
-    }
-
-    const start = childNode as Comment | null;
-    childNode = childNode?.nextSibling ?? null;
-    const target =
-      childNode && childNode.nodeType === Node.ELEMENT_NODE
-        ? (childNode as HTMLElement)
-        : null;
-
-    while (childNode && !(childNode.nodeType === Node.COMMENT_NODE)) {
-      childNode = childNode.nextSibling;
-    }
-
-    const end = childNode as Comment | null;
-    childNode = childNode?.nextSibling ?? null;
-
-    if (!start || !end) {
-      return [];
-    }
-
-    appliedBoundaries.push({
+    boundaries.push({
       start,
       end,
       target,
     });
   }
 
-  return appliedBoundaries;
+  container.replaceChildren(fragment);
+  lastRenderedContent = content;
+  lastRenderedCacheKey = cacheKey;
+  return boundaries;
 }
 
 function replaceChunk(boundary: ChunkBoundary, index: number, html: string): void {
@@ -333,14 +307,27 @@ function scheduleUpgradeFrame(): void {
 
 function enqueueChunkUpgrade(index: number, prioritize: boolean): void {
   const state = activeProgressiveRenderState;
-  if (!state || state.upgradedIndexes.has(index) || state.queuedIndexes.has(index)) {
+  if (!state || state.upgradedIndexes.has(index)) {
     return;
   }
 
-  state.queuedIndexes.add(index);
   if (prioritize) {
-    state.priorityQueue.push(index);
+    if (state.queuedIndexes.has(index)) {
+      state.backgroundQueue = state.backgroundQueue.filter(
+        (queuedIndex) => queuedIndex !== index,
+      );
+      if (!state.priorityQueue.includes(index)) {
+        state.priorityQueue.push(index);
+      }
+    } else {
+      state.queuedIndexes.add(index);
+      state.priorityQueue.push(index);
+    }
   } else {
+    if (state.queuedIndexes.has(index)) {
+      return;
+    }
+    state.queuedIndexes.add(index);
     state.backgroundQueue.push(index);
   }
 

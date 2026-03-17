@@ -1,4 +1,5 @@
 use crate::markdown::MarkdownState;
+use crate::markdown::build_render_cache_key;
 use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
@@ -15,6 +16,7 @@ const MARKDOWN_WATCH_ERROR_EVENT: &str = "markdown-watch-error";
 struct MarkdownUpdatedEvent {
     content: String,
     path: String,
+    render_cache_key: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -119,8 +121,9 @@ fn emit_markdown_update(
     drop(current_content);
 
     let payload = MarkdownUpdatedEvent {
-        content: updated_content,
+        content: updated_content.clone(),
         path: target_path.display().to_string(),
+        render_cache_key: build_render_cache_key(Some(target_path), &updated_content),
     };
     let _ = app_handle.emit(MARKDOWN_UPDATED_EVENT, payload);
 }

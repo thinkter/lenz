@@ -1,5 +1,6 @@
 mod launcher;
 mod markdown;
+mod render_cache;
 mod settings;
 mod watcher;
 
@@ -7,8 +8,20 @@ use markdown::MarkdownState;
 use tauri::State;
 
 #[tauri::command]
-fn get_markdown(state: State<'_, MarkdownState>) -> markdown::MarkdownResponse {
-    markdown::get_markdown(state)
+fn get_markdown(
+    app_handle: tauri::AppHandle,
+    state: State<'_, MarkdownState>,
+) -> markdown::MarkdownResponse {
+    markdown::get_markdown(&app_handle, state)
+}
+
+#[tauri::command]
+fn set_render_cache(
+    app_handle: tauri::AppHandle,
+    cache_key: String,
+    html: String,
+) -> Result<(), String> {
+    render_cache::write(&app_handle, &cache_key, &html)
 }
 
 #[tauri::command]
@@ -40,6 +53,7 @@ pub fn run() {
         .manage(markdown_state)
         .invoke_handler(tauri::generate_handler![
             get_markdown,
+            set_render_cache,
             get_zoom_level,
             set_zoom_level
         ])

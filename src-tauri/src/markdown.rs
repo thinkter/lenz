@@ -1,7 +1,8 @@
+use crate::render_cache;
 use serde::Serialize;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::State;
 
@@ -18,6 +19,8 @@ pub struct MarkdownResponse {
     pub content: String,
     pub path: Option<String>,
     pub live_updates: bool,
+    pub render_cache_key: String,
+    pub cached_html: Option<String>,
 }
 
 #[derive(Clone)]
@@ -54,15 +57,29 @@ pub fn create_state(document: MarkdownDocument) -> MarkdownState {
     }))
 }
 
-pub fn get_markdown(state: State<'_, MarkdownState>) -> MarkdownResponse {
+pub fn get_markdown(app_handle: &tauri::AppHandle, state: State<'_, MarkdownState>) -> MarkdownResponse {
     let markdown = state.0.content.lock().unwrap().clone();
     let path = state.0.path.as_ref().map(|path| path.display().to_string());
+    let render_cache_key = build_render_cache_key(state.0.path.as_deref(), &markdown);
+    let cached_html = render_cache::read(app_handle, &render_cache_key)
+        .map_err(|error| {
+            eprintln!("Failed to load cached render: {error}");
+            error
+        })
+        .ok()
+        .flatten();
 
     MarkdownResponse {
         content: markdown,
         path,
         live_updates: state.0.path.is_some(),
+        render_cache_key,
+        cached_html,
     }
+}
+
+pub fn build_render_cache_key(path: Option<&Path>, content: &str) -> String {
+    render_cache::build_cache_key(path, content)
 }
 
 fn non_flag_file_arg() -> Option<String> {

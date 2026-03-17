@@ -38,6 +38,11 @@ body {
   color: var(--color-fg-default);
 }
 
+.markdown-body > [data-markdown-chunk] {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
+}
+
 .markdown-body img,
 .markdown-body svg,
 .markdown-body canvas,

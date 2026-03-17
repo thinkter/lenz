@@ -5,6 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:app": "tauri dev -- -- test/short.md",
+    "dev:app:readme": "tauri dev -- -- README.md",
+    "dev:app:short": "tauri dev -- -- test/short.md",
+    "dev:app:long": "tauri dev -- -- test/long.md",
+    "dev:app:math": "tauri dev -- -- test/math.md",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

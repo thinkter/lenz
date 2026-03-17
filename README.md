@@ -33,7 +33,16 @@ If the file path is relative, Lenz will try a few sensible locations, including 
 
 ```bash
 bun install
-bun run tauri dev
+bun run dev:app
+```
+
+Useful fixture scripts:
+
+```bash
+bun run dev:app:short
+bun run dev:app:long
+bun run dev:app:math
+bun run dev:app:readme
 ```
 
 ### Build locally

@@ -24,19 +24,19 @@ body {
 
 body {
   overflow-x: auto;
+  overflow-y: auto;
 }
 
 .markdown-body {
   box-sizing: border-box;
   width: calc(100% / var(--app-zoom-level));
   max-width: none;
-  min-height: calc(100vh / var(--app-zoom-level));
+  min-height: 100vh;
   margin: 0;
   padding: 45px;
   background-color: #000000;
   color: var(--color-fg-default);
-  transform: scale(var(--app-zoom-level));
-  transform-origin: top left;
+  zoom: var(--app-zoom-level);
 }
 
 @media (max-width: 767px) {

@@ -1,17 +1,35 @@
 @import "github-markdown-css/github-markdown.css";
 
+/* Override GitHub markdown theme variables for a black UI */
+:root {
+  --color-canvas-default: #000000;
+  --color-canvas-subtle: #000000;
+  --color-fg-default: #e8e8e8;
+  --color-fg-muted: #bdbdbd;
+  --color-border-default: #2b2b2b;
+}
+
+html,
 body {
+  width: 100%;
+  min-height: 100%;
   margin: 0;
   padding: 0;
-  background-color: var(--color-canvas-default);
+  background-color: #000000;
+  color: var(--color-fg-default);
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas",
+    monospace;
 }
 
 .markdown-body {
   box-sizing: border-box;
-  min-width: 200px;
-  max-width: 980px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  min-height: 100vh;
+  margin: 0;
   padding: 45px;
+  background-color: #000000;
+  color: var(--color-fg-default);
 }
 
 @media (max-width: 767px) {

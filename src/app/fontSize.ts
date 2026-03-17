@@ -4,7 +4,6 @@ const DEFAULT_ZOOM_LEVEL = 1;
 const MIN_ZOOM_LEVEL = 0.5;
 const MAX_ZOOM_LEVEL = 2;
 const ZOOM_LEVEL_STEP = 0.1;
-const ROOT_ZOOM_VARIABLE = "--app-zoom-level";
 
 let currentZoomLevel = DEFAULT_ZOOM_LEVEL;
 
@@ -17,10 +16,6 @@ function clampZoomLevel(zoomLevel: number): number {
 
 function applyZoomLevel(zoomLevel: number): void {
   currentZoomLevel = clampZoomLevel(zoomLevel);
-  document.documentElement.style.setProperty(
-    ROOT_ZOOM_VARIABLE,
-    currentZoomLevel.toString(),
-  );
 }
 
 async function persistZoomLevel(zoomLevel: number): Promise<void> {

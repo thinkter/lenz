@@ -6,11 +6,27 @@ import { renderMarkdownToHtml } from "./parser";
 const MARKDOWN_CONTAINER_SELECTOR = "#markdown-body";
 const MARKDOWN_UPDATE_EVENT_NAMES = ["markdown-updated", "markdown_updated"];
 
+let lastRenderedContent: string | null = null;
+let pendingContent: string | null = null;
+let pendingRenderFrameId: number | null = null;
+
 function getMarkdownContainer(): HTMLElement | null {
   return document.querySelector(MARKDOWN_CONTAINER_SELECTOR) as HTMLElement | null;
 }
 
+function resetPendingRender(): void {
+  if (pendingRenderFrameId !== null) {
+    window.cancelAnimationFrame(pendingRenderFrameId);
+    pendingRenderFrameId = null;
+  }
+
+  pendingContent = null;
+}
+
 function renderMarkdownError(error: unknown): void {
+  resetPendingRender();
+  lastRenderedContent = null;
+
   const container = getMarkdownContainer();
   if (!container) return;
   container.innerHTML = `<p style="color: red;">Error failed to load markdown: ${error}</p>`;
@@ -31,10 +47,35 @@ function extractMarkdownContent(payload: unknown): string | null {
   return null;
 }
 
-export function renderMarkdownContent(content: string): void {
+function flushPendingRender(): void {
+  pendingRenderFrameId = null;
+
+  const content = pendingContent;
+  pendingContent = null;
+  if (content === null || content === lastRenderedContent) {
+    return;
+  }
+
   const container = getMarkdownContainer();
   if (!container) return;
-  container.innerHTML = renderMarkdownToHtml(content);
+
+  const template = document.createElement("template");
+  template.innerHTML = renderMarkdownToHtml(content);
+  container.replaceChildren(template.content.cloneNode(true));
+  lastRenderedContent = content;
+}
+
+export function renderMarkdownContent(content: string): void {
+  if (content === lastRenderedContent && pendingRenderFrameId === null) {
+    return;
+  }
+
+  pendingContent = content;
+  if (pendingRenderFrameId !== null) {
+    return;
+  }
+
+  pendingRenderFrameId = window.requestAnimationFrame(flushPendingRender);
 }
 
 export async function loadInitialMarkdown(): Promise<void> {

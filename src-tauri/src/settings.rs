@@ -29,6 +29,20 @@ pub fn get_zoom_level(app_handle: &tauri::AppHandle) -> Result<f64, String> {
     Ok(DEFAULT_ZOOM_LEVEL)
 }
 
+pub fn default_zoom_level() -> f64 {
+    DEFAULT_ZOOM_LEVEL
+}
+
+pub fn apply_zoom_level(app_handle: &tauri::AppHandle, zoom_level: f64) -> Result<(), String> {
+    let webview = app_handle
+        .get_webview_window("main")
+        .ok_or_else(|| "Failed to locate main webview window.".to_string())?;
+
+    webview
+        .set_zoom(zoom_level)
+        .map_err(|error| format!("Failed to apply zoom level: {error}"))
+}
+
 pub fn set_zoom_level(app_handle: &tauri::AppHandle, zoom_level: f64) -> Result<f64, String> {
     let normalized_zoom_level = normalize_zoom_level(zoom_level);
     let path = settings_path(app_handle)?;
@@ -41,6 +55,8 @@ pub fn set_zoom_level(app_handle: &tauri::AppHandle, zoom_level: f64) -> Result<
 
     fs::write(&path, contents)
         .map_err(|error| format!("Failed to write settings file `{}`: {error}", path.display()))?;
+
+    apply_zoom_level(app_handle, normalized_zoom_level)?;
 
     Ok(normalized_zoom_level)
 }

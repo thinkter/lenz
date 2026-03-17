@@ -16,6 +16,7 @@ md.use(texmath, {
   engine: katex,
   delimiters: "dollars",
   katexOptions: {
+    output: "html",
     throwOnError: false,
     strict: "ignore",
   },

@@ -44,6 +44,20 @@ pub fn run() {
             set_zoom_level
         ])
         .setup(move |app| {
+            let saved_zoom_level = match settings::get_zoom_level(&app.handle()) {
+                Ok(zoom_level) => zoom_level,
+                Err(error) => {
+                    eprintln!(
+                        "Failed to load persisted zoom level; falling back to default zoom: {error}"
+                    );
+                    settings::default_zoom_level()
+                }
+            };
+
+            if let Err(error) = settings::apply_zoom_level(&app.handle(), saved_zoom_level) {
+                eprintln!("Failed to apply startup zoom level: {error}");
+            }
+
             watcher::start(app.handle().clone(), watcher_state.clone());
             Ok(())
         })

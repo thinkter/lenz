@@ -1,5 +1,5 @@
 const DOUBLE_G_WINDOW_MS = 350;
-const SCROLL_STEP_RATIO = 0.12;
+const FALLBACK_LINE_SCROLL_STEP_PX = 48;
 
 let lastGPressAt: number | null = null;
 
@@ -16,6 +16,17 @@ function getScrollElement(): Element {
   return document.scrollingElement ?? document.documentElement;
 }
 
+function getLineScrollStep(): number {
+  const lineHeight = Number.parseFloat(
+    getComputedStyle(document.body).lineHeight,
+  );
+  if (Number.isFinite(lineHeight) && lineHeight > 0) {
+    return Math.max(24, Math.round(lineHeight * 3));
+  }
+
+  return FALLBACK_LINE_SCROLL_STEP_PX;
+}
+
 function handleVimScrollKeydown(event: KeyboardEvent): void {
   if (event.ctrlKey || event.metaKey || event.altKey) {
     lastGPressAt = null;
@@ -28,7 +39,7 @@ function handleVimScrollKeydown(event: KeyboardEvent): void {
   }
 
   const key = event.key;
-  const scrollStep = Math.max(40, Math.round(window.innerHeight * SCROLL_STEP_RATIO));
+  const scrollStep = getLineScrollStep();
 
   if (key === "j") {
     window.scrollBy({ top: scrollStep, behavior: "auto" });

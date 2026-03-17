@@ -1,16 +1,55 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use serde::Serialize;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
-use std::sync::Mutex;
-use tauri::State;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+use tauri::{Emitter, State};
 
-struct MarkdownState(Mutex<String>);
+const MARKDOWN_UPDATED_EVENT: &str = "markdown-updated";
+const MARKDOWN_WATCH_ERROR_EVENT: &str = "markdown-watch-error";
+
+#[derive(Clone)]
+struct MarkdownState(Arc<MarkdownStateInner>);
+
+struct MarkdownStateInner {
+    content: Mutex<String>,
+    path: Option<PathBuf>,
+}
+
+#[derive(Serialize)]
+struct MarkdownResponse {
+    content: String,
+    path: Option<String>,
+    live_updates: bool,
+}
+
+#[derive(Clone, Serialize)]
+struct MarkdownUpdatedEvent {
+    content: String,
+    path: String,
+}
+
+#[derive(Clone, Serialize)]
+struct MarkdownWatchErrorEvent {
+    message: String,
+    path: Option<String>,
+}
 
 #[tauri::command]
-fn get_markdown(state: State<'_, MarkdownState>) -> String {
-    let md = state.0.lock().unwrap();
-    md.clone()
+fn get_markdown(state: State<'_, MarkdownState>) -> MarkdownResponse {
+    let md = state.0.content.lock().unwrap().clone();
+    let path = state.0.path.as_ref().map(|p| p.display().to_string());
+
+    MarkdownResponse {
+        content: md,
+        live_updates: path.is_some(),
+        path,
+    }
 }
 
 fn non_flag_file_arg() -> Option<String> {
@@ -61,14 +100,17 @@ fn candidate_paths(arg: &str) -> Vec<PathBuf> {
     candidates
 }
 
-fn try_read_markdown(arg: &str) -> Result<String, String> {
+fn try_read_markdown(arg: &str) -> Result<(String, PathBuf), String> {
     let candidates = candidate_paths(arg);
     let mut attempted = Vec::new();
 
     for path in &candidates {
         attempted.push(path.display().to_string());
         match fs::read_to_string(path) {
-            Ok(content) => return Ok(content),
+            Ok(content) => {
+                let resolved_path = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+                return Ok((content, resolved_path));
+            }
             Err(_) => continue,
         }
     }
@@ -99,21 +141,166 @@ fn try_read_markdown(arg: &str) -> Result<String, String> {
     Err(details)
 }
 
+fn path_matches_target(event_path: &Path, target_path: &Path) -> bool {
+    if event_path == target_path {
+        return true;
+    }
+
+    let event_abs = fs::canonicalize(event_path).unwrap_or_else(|_| event_path.to_path_buf());
+    let target_abs = fs::canonicalize(target_path).unwrap_or_else(|_| target_path.to_path_buf());
+    event_abs == target_abs
+}
+
+fn should_process_event(event: &Event, target_path: &Path) -> bool {
+    let is_content_event = matches!(
+        event.kind,
+        EventKind::Modify(ModifyKind::Data(_))
+            | EventKind::Modify(ModifyKind::Any)
+            | EventKind::Modify(ModifyKind::Name(RenameMode::Both))
+            | EventKind::Modify(ModifyKind::Name(RenameMode::To))
+            | EventKind::Create(CreateKind::File)
+            | EventKind::Create(CreateKind::Any)
+            | EventKind::Remove(RemoveKind::File)
+            | EventKind::Any
+    );
+
+    if !is_content_event {
+        return false;
+    }
+
+    if event.paths.is_empty() {
+        return true;
+    }
+
+    event
+        .paths
+        .iter()
+        .any(|event_path| path_matches_target(event_path, target_path))
+}
+
+fn emit_watch_error(
+    app_handle: &tauri::AppHandle,
+    target_path: Option<&Path>,
+    message: impl Into<String>,
+) {
+    let payload = MarkdownWatchErrorEvent {
+        message: message.into(),
+        path: target_path.map(|p| p.display().to_string()),
+    };
+    let _ = app_handle.emit(MARKDOWN_WATCH_ERROR_EVENT, payload);
+}
+
+fn start_markdown_watcher(app_handle: tauri::AppHandle, state: MarkdownState) {
+    let Some(target_path) = state.0.path.clone() else {
+        return;
+    };
+
+    thread::spawn(move || {
+        let watch_root = target_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| target_path.clone());
+
+        let (event_tx, event_rx) = std::sync::mpsc::channel::<notify::Result<Event>>();
+
+        let mut watcher = match RecommendedWatcher::new(
+            move |res| {
+                let _ = event_tx.send(res);
+            },
+            Config::default().with_poll_interval(Duration::from_millis(200)),
+        ) {
+            Ok(watcher) => watcher,
+            Err(error) => {
+                emit_watch_error(
+                    &app_handle,
+                    Some(&target_path),
+                    format!("Failed to initialize file watcher: {error}"),
+                );
+                return;
+            }
+        };
+
+        if let Err(error) = watcher.watch(&watch_root, RecursiveMode::NonRecursive) {
+            emit_watch_error(
+                &app_handle,
+                Some(&target_path),
+                format!("Failed to watch path `{}`: {error}", watch_root.display()),
+            );
+            return;
+        }
+
+        while let Ok(event_result) = event_rx.recv() {
+            match event_result {
+                Ok(event) => {
+                    if !should_process_event(&event, &target_path) {
+                        continue;
+                    }
+
+                    match fs::read_to_string(&target_path) {
+                        Ok(updated_content) => {
+                            let mut current_content = state.0.content.lock().unwrap();
+                            if *current_content == updated_content {
+                                continue;
+                            }
+
+                            *current_content = updated_content.clone();
+                            drop(current_content);
+
+                            let payload = MarkdownUpdatedEvent {
+                                content: updated_content,
+                                path: target_path.display().to_string(),
+                            };
+                            let _ = app_handle.emit(MARKDOWN_UPDATED_EVENT, payload);
+                        }
+                        Err(error) => {
+                            emit_watch_error(
+                                &app_handle,
+                                Some(&target_path),
+                                format!("File changed but could not be read: {error}"),
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    emit_watch_error(
+                        &app_handle,
+                        Some(&target_path),
+                        format!("Watcher error: {error}"),
+                    );
+                }
+            }
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let markdown_content = if let Some(file_arg) = non_flag_file_arg() {
+    let (markdown_content, resolved_markdown_path) = if let Some(file_arg) = non_flag_file_arg() {
         match try_read_markdown(&file_arg) {
-            Ok(content) => content,
-            Err(error_markdown) => error_markdown,
+            Ok((content, path)) => (content, Some(path)),
+            Err(error_markdown) => (error_markdown, None),
         }
     } else {
-        "# Welcome to Lenz\nNo markdown file provided. Usage: `lenz <file.md>`".to_string()
+        (
+            "# Welcome to Lenz\nNo markdown file provided. Usage: `lenz <file.md>`".to_string(),
+            None,
+        )
     };
+
+    let markdown_state = MarkdownState(Arc::new(MarkdownStateInner {
+        content: Mutex::new(markdown_content),
+        path: resolved_markdown_path,
+    }));
+    let watcher_state = markdown_state.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(MarkdownState(Mutex::new(markdown_content)))
+        .manage(markdown_state)
         .invoke_handler(tauri::generate_handler![get_markdown])
+        .setup(move |app| {
+            start_markdown_watcher(app.handle().clone(), watcher_state.clone());
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,6 +1,3 @@
-hiii
-
-
 Here is your comprehensive, verbose guide to mastering **Module 4 (Probability Distributions)**. 
 
 Since you are short on time and this is an open-book exam, this guide is designed to teach you **how to recognize the problem type** and **which formula/steps to apply immediately**. 

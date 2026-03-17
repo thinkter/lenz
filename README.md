@@ -1,29 +1,45 @@
 # Lenz
 
-A Tauri + Vanilla TypeScript markdown viewer with KaTeX support.
+A desktop markdown viewer built with Tauri and TypeScript.
 
-## Recommended IDE Setup
+It is designed for opening a markdown file from the terminal, rendering it in a native window, and staying out of the way. KaTeX is supported, file changes are watched live, and the app now detaches from the terminal when launched so the shell stays usable.
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## Features
 
-## Automated Releases (GitHub Actions)
+- Open a markdown file directly from the command line with `lenz <file.md>`.
+- Live-reload the view when the file changes on disk.
+- Render math with KaTeX.
+- Scroll with standard input devices or Vim-style `j` / `k`.
+- Zoom the document with `Ctrl/Cmd +` and `Ctrl/Cmd -`.
+- Persist zoom level across launches using the platform app config directory.
 
-This repo includes a workflow at `.github/workflows/release.yml` that:
+## Usage
 
-- builds the Tauri app on:
-  - Linux (`ubuntu-22.04`)
-  - Windows (`windows-latest`)
-  - macOS (`macos-latest`)
-- creates/updates a GitHub Release
-- uploads generated bundle artifacts (including AppImage on Linux) to that Release
+```bash
+lenz notes.md
+```
 
-### Triggering a release
+If the file path is relative, Lenz will try a few sensible locations, including the original working directory and the executable directory, which helps when it is launched from packaged builds such as AppImage.
 
-The workflow runs when you push a tag matching `v*.*.*` (for example `v0.1.0`).
+## Development
 
-You can also run it manually from the GitHub Actions UI using `workflow_dispatch`.
+### Requirements
 
-## Notes
+- [Bun](https://bun.sh/)
+- [Rust](https://www.rust-lang.org/tools/install)
+- Tauri system dependencies for your platform
 
-- The workflow uses the default `GITHUB_TOKEN` provided by GitHub Actions with `contents: write` permission.
-- For tag-triggered builds, use semantic version-like tags such as `v0.1.0`.
+### Run in development
+
+```bash
+bun install
+bun run tauri dev
+```
+
+### Build locally
+
+```bash
+bun run build
+cargo check --manifest-path src-tauri/Cargo.toml
+bun run tauri build
+```

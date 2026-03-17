@@ -4,7 +4,9 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -13,6 +15,7 @@ use tauri::{Emitter, Manager, State};
 const MARKDOWN_UPDATED_EVENT: &str = "markdown-updated";
 const MARKDOWN_WATCH_ERROR_EVENT: &str = "markdown-watch-error";
 const SETTINGS_FILE_NAME: &str = "settings.json";
+const DETACHED_ENV_VAR: &str = "LENZ_DETACHED";
 const DEFAULT_ZOOM_LEVEL: f64 = 1.0;
 const MIN_ZOOM_LEVEL: f64 = 0.5;
 const MAX_ZOOM_LEVEL: f64 = 2.0;
@@ -123,6 +126,62 @@ fn set_zoom_level(app_handle: tauri::AppHandle, zoom_level: f64) -> Result<f64, 
         .map_err(|error| format!("Failed to write settings file `{}`: {error}", path.display()))?;
 
     Ok(normalized_zoom_level)
+}
+
+fn should_detach_from_terminal() -> bool {
+    if env::var_os(DETACHED_ENV_VAR).is_some() {
+        return false;
+    }
+
+    std::io::stdin().is_terminal()
+        || std::io::stdout().is_terminal()
+        || std::io::stderr().is_terminal()
+}
+
+#[cfg(windows)]
+fn configure_detached_command(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+
+    command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+}
+
+#[cfg(unix)]
+fn configure_detached_command(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    command.process_group(0);
+}
+
+fn detach_to_background() -> Result<bool, String> {
+    if !should_detach_from_terminal() {
+        return Ok(false);
+    }
+
+    let current_exe =
+        env::current_exe().map_err(|error| format!("Failed to resolve current executable: {error}"))?;
+    let current_dir =
+        env::current_dir().map_err(|error| format!("Failed to resolve current directory: {error}"))?;
+    let args: Vec<_> = env::args_os().skip(1).collect();
+
+    let mut command = Command::new(current_exe);
+    command
+        .args(args)
+        .current_dir(current_dir)
+        .env(DETACHED_ENV_VAR, "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    configure_detached_command(&mut command);
+
+    command
+        .spawn()
+        .map_err(|error| format!("Failed to relaunch lenz in the background: {error}"))?;
+
+    Ok(true)
 }
 
 fn non_flag_file_arg() -> Option<String> {
@@ -348,6 +407,12 @@ fn start_markdown_watcher(app_handle: tauri::AppHandle, state: MarkdownState) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    match detach_to_background() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => eprintln!("{error}"),
+    }
+
     let (markdown_content, resolved_markdown_path) = if let Some(file_arg) = non_flag_file_arg() {
         match try_read_markdown(&file_arg) {
             Ok((content, path)) => (content, Some(path)),

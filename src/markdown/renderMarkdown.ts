@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import { renderMarkdownToHtml } from "./parser";
+import { renderMarkdownToDom } from "./parser";
 
 const MARKDOWN_CONTAINER_SELECTOR = "#markdown-body";
 const MARKDOWN_UPDATE_EVENT_NAMES = ["markdown-updated", "markdown_updated"];
@@ -34,7 +34,7 @@ function extractMarkdownContent(payload: unknown): string | null {
 export function renderMarkdownContent(content: string): void {
   const container = getMarkdownContainer();
   if (!container) return;
-  container.innerHTML = renderMarkdownToHtml(content);
+  container.replaceChildren(...renderMarkdownToDom(content, document));
 }
 
 export async function loadInitialMarkdown(): Promise<void> {

@@ -53,13 +53,8 @@ async function promptForFile(): Promise<void> {
 }
 
 async function initializeMarkdownView(): Promise<void> {
-  const markdown = await loadInitialMarkdownState();
-
+  await loadInitialMarkdownState();
   stopMarkdownUpdates = await subscribeToMarkdownUpdates();
-
-  if (!markdown.path) {
-    await promptForFile();
-  }
 }
 
 function setupOpenFileButton(): void {

@@ -1,17 +1,20 @@
 # Lenz
 
-A desktop markdown viewer built with Tauri and TypeScript.
-
-It is designed for opening a markdown file from the terminal, rendering it in a native window, and staying out of the way. KaTeX is supported, file changes are watched live, and the app now detaches from the terminal when launched so the shell stays usable.
+Native desktop Markdown preview from your terminal (Tauri + TypeScript).
 
 ## Features
 
-- Open a markdown file directly from the command line with `lenz <file.md>`.
-- Live-reload the view when the file changes on disk.
-- Render math with KaTeX.
-- Scroll with standard input devices or Vim-style `j` / `k`.
-- Zoom the document with `Ctrl/Cmd +` and `Ctrl/Cmd -`.
-- Persist zoom level across launches using the platform app config directory.
+- Open a Markdown file as a native window: `lenz path/to/file.md`
+- Live reload on save (when a file path is provided)
+- KaTeX math via `$$ ... $$`
+- Full CommonMark support thanks to markdown-it
+- Scroll: mouse/trackpad or `j` / `k`
+- Zoom: `Ctrl/Cmd +` and `Ctrl/Cmd -` 
+
+## Install
+
+- Download the latest build from GitHub Releases (Windows installer, macOS `.app`, Linux AppImage/bundles): [`releases/latest`](../../releases/latest)
+- Or build from source (see Development).
 
 ## Usage
 
@@ -19,15 +22,13 @@ It is designed for opening a markdown file from the terminal, rendering it in a 
 lenz notes.md
 ```
 
-If the file path is relative, Lenz will try a few sensible locations, including the original working directory and the executable directory, which helps when it is launched from packaged builds such as AppImage.
-
 ## Development
 
 ### Requirements
 
 - [Bun](https://bun.sh/)
 - [Rust](https://www.rust-lang.org/tools/install)
-- Tauri system dependencies for your platform
+- Tauri system dependencies for your platform (see Tauri docs)
 
 ### Run in development
 
@@ -36,7 +37,13 @@ bun install
 bun run dev:app
 ```
 
-Useful fixture scripts:
+Open an arbitrary file in dev:
+
+```bash
+bun tauri dev -- -- path/to/file.md
+```
+
+Fixtures:
 
 ```bash
 bun run dev:app:short

@@ -11,7 +11,7 @@ pub struct MarkdownState(pub Arc<MarkdownStateInner>);
 
 pub struct MarkdownStateInner {
     pub content: Mutex<String>,
-    pub path: Option<PathBuf>,
+    pub path: Mutex<Option<PathBuf>>,
 }
 
 #[derive(Serialize)]
@@ -53,14 +53,14 @@ pub fn load_from_cli() -> MarkdownDocument {
 pub fn create_state(document: MarkdownDocument) -> MarkdownState {
     MarkdownState(Arc::new(MarkdownStateInner {
         content: Mutex::new(document.content),
-        path: document.path,
+        path: Mutex::new(document.path),
     }))
 }
 
 pub fn get_markdown(app_handle: &tauri::AppHandle, state: State<'_, MarkdownState>) -> MarkdownResponse {
     let markdown = state.0.content.lock().unwrap().clone();
-    let path = state.0.path.as_ref().map(|path| path.display().to_string());
-    let render_cache_key = build_render_cache_key(state.0.path.as_deref(), &markdown);
+    let path = state.0.path.lock().unwrap().clone();
+    let render_cache_key = build_render_cache_key(path.as_deref(), &markdown);
     let cached_html = render_cache::read(app_handle, &render_cache_key)
         .map_err(|error| {
             eprintln!("Failed to load cached render: {error}");
@@ -71,11 +71,44 @@ pub fn get_markdown(app_handle: &tauri::AppHandle, state: State<'_, MarkdownStat
 
     MarkdownResponse {
         content: markdown,
-        path,
-        live_updates: state.0.path.is_some(),
+        path: path.as_ref().map(|path| path.display().to_string()),
+        live_updates: path.is_some(),
         render_cache_key,
         cached_html,
     }
+}
+
+pub fn open_file(
+    app_handle: &tauri::AppHandle,
+    state: State<'_, MarkdownState>,
+    path: String,
+) -> Result<MarkdownResponse, String> {
+    let (content, resolved_path) = try_read_markdown(&path)?;
+    {
+        let mut current_content = state.0.content.lock().unwrap();
+        *current_content = content.clone();
+    }
+    {
+        let mut current_path = state.0.path.lock().unwrap();
+        *current_path = Some(resolved_path.clone());
+    }
+
+    let render_cache_key = build_render_cache_key(Some(&resolved_path), &content);
+    let cached_html = render_cache::read(app_handle, &render_cache_key)
+        .map_err(|error| {
+            eprintln!("Failed to load cached render: {error}");
+            error
+        })
+        .ok()
+        .flatten();
+
+    Ok(MarkdownResponse {
+        content,
+        path: Some(resolved_path.display().to_string()),
+        live_updates: true,
+        render_cache_key,
+        cached_html,
+    })
 }
 
 pub fn build_render_cache_key(path: Option<&Path>, content: &str) -> String {

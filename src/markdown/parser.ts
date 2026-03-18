@@ -2,7 +2,7 @@ import MarkdownIt from "markdown-it";
 import texmath from "markdown-it-texmath";
 import katex from "katex";
 import type Token from "markdown-it/lib/token.mjs";
-import "katex/dist/katex.min.css";
+import { createBoundedKatexEngine } from "./katexRenderCache";
 
 type MarkdownRenderPlan = {
   chunks: string[];
@@ -23,7 +23,7 @@ function createMarkdownParser(enableMath: boolean): MarkdownIt {
 
   if (enableMath) {
     markdown.use(texmath, {
-      engine: katex,
+      engine: cachedKatexEngine,
       delimiters: "dollars",
       katexOptions: {
         output: "html",
@@ -36,6 +36,7 @@ function createMarkdownParser(enableMath: boolean): MarkdownIt {
   return markdown;
 }
 
+const cachedKatexEngine = createBoundedKatexEngine(katex);
 const previewMarkdown = createMarkdownParser(false);
 const fullMarkdown = createMarkdownParser(true);
 
@@ -88,6 +89,10 @@ function buildRenderPlan(markdown: MarkdownIt, content: string): MarkdownRenderP
 
 export function createPreviewRenderPlan(content: string): MarkdownRenderPlan {
   return buildRenderPlan(previewMarkdown, content);
+}
+
+export function createFullRenderPlan(content: string): MarkdownRenderPlan {
+  return buildRenderPlan(fullMarkdown, content);
 }
 
 export function createLazyFullRenderPlan(content: string): LazyFullRenderPlan {

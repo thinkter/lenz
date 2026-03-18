@@ -34,8 +34,19 @@ fn set_zoom_level(app_handle: tauri::AppHandle, zoom_level: f64) -> Result<f64, 
     settings::set_zoom_level(&app_handle, zoom_level)
 }
 
+#[tauri::command]
+fn open_file(
+    app_handle: tauri::AppHandle,
+    state: State<'_, MarkdownState>,
+    path: String,
+) -> Result<markdown::MarkdownResponse, String> {
+    markdown::open_file(&app_handle, state, path)
+}
+
 fn build_app() -> tauri::Builder<tauri::Wry> {
-    tauri::Builder::default().plugin(tauri_plugin_opener::init())
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -53,6 +64,7 @@ pub fn run() {
         .manage(markdown_state)
         .invoke_handler(tauri::generate_handler![
             get_markdown,
+            open_file,
             set_render_cache,
             get_zoom_level,
             set_zoom_level

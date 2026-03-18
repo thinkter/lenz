@@ -1,16 +1,15 @@
 use crate::markdown::MarkdownState;
 use crate::markdown::build_render_cache_key;
-use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
-use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 use tauri::Emitter;
 
 const MARKDOWN_UPDATED_EVENT: &str = "markdown-updated";
 const MARKDOWN_WATCH_ERROR_EVENT: &str = "markdown-watch-error";
+const POLL_INTERVAL_MS: u64 = 200;
 
 #[derive(Clone, Serialize)]
 struct MarkdownUpdatedEvent {
@@ -26,87 +25,40 @@ struct MarkdownWatchErrorEvent {
 }
 
 pub fn start(app_handle: tauri::AppHandle, state: MarkdownState) {
-    let Some(target_path) = state.0.path.clone() else {
-        return;
-    };
-
     thread::spawn(move || {
-        let watch_root = target_path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| target_path.clone());
+        let mut watched_path: Option<PathBuf> = None;
+        let mut last_error: Option<String> = None;
 
-        let (event_tx, event_rx) = std::sync::mpsc::channel::<notify::Result<Event>>();
+        loop {
+            let current_path = state.0.path.lock().unwrap().clone();
 
-        let mut watcher = match RecommendedWatcher::new(
-            move |result| {
-                let _ = event_tx.send(result);
-            },
-            Config::default().with_poll_interval(Duration::from_millis(200)),
-        ) {
-            Ok(watcher) => watcher,
-            Err(error) => {
-                emit_watch_error(
-                    &app_handle,
-                    Some(&target_path),
-                    format!("Failed to initialize file watcher: {error}"),
-                );
-                return;
+            if current_path != watched_path {
+                watched_path = current_path.clone();
+                last_error = None;
             }
-        };
 
-        if let Err(error) = watcher.watch(&watch_root, RecursiveMode::NonRecursive) {
-            emit_watch_error(
-                &app_handle,
-                Some(&target_path),
-                format!("Failed to watch path `{}`: {error}", watch_root.display()),
-            );
-            return;
-        }
+            if let Some(target_path) = current_path {
+                match fs::read_to_string(&target_path) {
+                    Ok(updated_content) => {
+                        last_error = None;
+                        sync_markdown_content(&app_handle, &state, &target_path, updated_content);
+                    }
+                    Err(error) => {
+                        let message = format!("File could not be read: {error}");
+                        if last_error.as_deref() != Some(message.as_str()) {
+                            emit_watch_error(&app_handle, Some(&target_path), &message);
+                            last_error = Some(message);
+                        }
+                    }
+                }
+            }
 
-        while let Ok(event_result) = event_rx.recv() {
-            handle_event_result(&app_handle, &state, &target_path, event_result);
+            thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
         }
     });
 }
 
-fn handle_event_result(
-    app_handle: &tauri::AppHandle,
-    state: &MarkdownState,
-    target_path: &Path,
-    event_result: notify::Result<Event>,
-) {
-    match event_result {
-        Ok(event) => handle_watch_event(app_handle, state, target_path, event),
-        Err(error) => emit_watch_error(
-            app_handle,
-            Some(target_path),
-            format!("Watcher error: {error}"),
-        ),
-    }
-}
-
-fn handle_watch_event(
-    app_handle: &tauri::AppHandle,
-    state: &MarkdownState,
-    target_path: &Path,
-    event: Event,
-) {
-    if !should_process_event(&event, target_path) {
-        return;
-    }
-
-    match fs::read_to_string(target_path) {
-        Ok(updated_content) => emit_markdown_update(app_handle, state, target_path, updated_content),
-        Err(error) => emit_watch_error(
-            app_handle,
-            Some(target_path),
-            format!("File changed but could not be read: {error}"),
-        ),
-    }
-}
-
-fn emit_markdown_update(
+fn sync_markdown_content(
     app_handle: &tauri::AppHandle,
     state: &MarkdownState,
     target_path: &Path,
@@ -138,41 +90,4 @@ fn emit_watch_error(
         path: target_path.map(|path| path.display().to_string()),
     };
     let _ = app_handle.emit(MARKDOWN_WATCH_ERROR_EVENT, payload);
-}
-
-fn should_process_event(event: &Event, target_path: &Path) -> bool {
-    let is_content_event = matches!(
-        event.kind,
-        EventKind::Modify(ModifyKind::Data(_))
-            | EventKind::Modify(ModifyKind::Any)
-            | EventKind::Modify(ModifyKind::Name(RenameMode::Both))
-            | EventKind::Modify(ModifyKind::Name(RenameMode::To))
-            | EventKind::Create(CreateKind::File)
-            | EventKind::Create(CreateKind::Any)
-            | EventKind::Remove(RemoveKind::File)
-            | EventKind::Any
-    );
-
-    if !is_content_event {
-        return false;
-    }
-
-    if event.paths.is_empty() {
-        return true;
-    }
-
-    event
-        .paths
-        .iter()
-        .any(|event_path| path_matches_target(event_path, target_path))
-}
-
-fn path_matches_target(event_path: &Path, target_path: &Path) -> bool {
-    if event_path == target_path {
-        return true;
-    }
-
-    let event_abs = fs::canonicalize(event_path).unwrap_or_else(|_| event_path.to_path_buf());
-    let target_abs = fs::canonicalize(target_path).unwrap_or_else(|_| target_path.to_path_buf());
-    event_abs == target_abs
 }

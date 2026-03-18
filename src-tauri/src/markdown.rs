@@ -1,18 +1,11 @@
+use crate::markdown_source;
+use crate::markdown_state::MarkdownDocument;
 use crate::render_cache;
 use serde::Serialize;
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::Path;
 use tauri::State;
 
-#[derive(Clone)]
-pub struct MarkdownState(pub Arc<MarkdownStateInner>);
-
-pub struct MarkdownStateInner {
-    pub content: Mutex<String>,
-    pub path: Mutex<Option<PathBuf>>,
-}
+pub use crate::markdown_state::MarkdownState;
 
 #[derive(Serialize)]
 pub struct MarkdownResponse {
@@ -23,59 +16,16 @@ pub struct MarkdownResponse {
     pub cached_html: Option<String>,
 }
 
-#[derive(Clone)]
-pub struct MarkdownDocument {
-    pub content: String,
-    pub path: Option<PathBuf>,
-}
-
 pub fn load_from_cli() -> MarkdownDocument {
-    if let Some(file_arg) = non_flag_file_arg() {
-        match try_read_markdown(&file_arg) {
-            Ok((content, path)) => MarkdownDocument {
-                content,
-                path: Some(path),
-            },
-            Err(error_markdown) => MarkdownDocument {
-                content: error_markdown,
-                path: None,
-            },
-        }
-    } else {
-        MarkdownDocument {
-            content: "# Welcome to Lenz\nNo markdown file provided. Usage: `lenz <file.md>`"
-                .to_string(),
-            path: None,
-        }
-    }
+    markdown_source::load_from_cli()
 }
 
 pub fn create_state(document: MarkdownDocument) -> MarkdownState {
-    MarkdownState(Arc::new(MarkdownStateInner {
-        content: Mutex::new(document.content),
-        path: Mutex::new(document.path),
-    }))
+    MarkdownState::new(document)
 }
 
 pub fn get_markdown(app_handle: &tauri::AppHandle, state: State<'_, MarkdownState>) -> MarkdownResponse {
-    let markdown = state.0.content.lock().unwrap().clone();
-    let path = state.0.path.lock().unwrap().clone();
-    let render_cache_key = build_render_cache_key(path.as_deref(), &markdown);
-    let cached_html = render_cache::read(app_handle, &render_cache_key)
-        .map_err(|error| {
-            eprintln!("Failed to load cached render: {error}");
-            error
-        })
-        .ok()
-        .flatten();
-
-    MarkdownResponse {
-        content: markdown,
-        path: path.as_ref().map(|path| path.display().to_string()),
-        live_updates: path.is_some(),
-        render_cache_key,
-        cached_html,
-    }
+    build_response(app_handle, state.inner().snapshot())
 }
 
 pub fn open_file(
@@ -83,117 +33,35 @@ pub fn open_file(
     state: State<'_, MarkdownState>,
     path: String,
 ) -> Result<MarkdownResponse, String> {
-    let (content, resolved_path) = try_read_markdown(&path)?;
-    {
-        let mut current_content = state.0.content.lock().unwrap();
-        *current_content = content.clone();
-    }
-    {
-        let mut current_path = state.0.path.lock().unwrap();
-        *current_path = Some(resolved_path.clone());
-    }
-
-    let render_cache_key = build_render_cache_key(Some(&resolved_path), &content);
-    let cached_html = render_cache::read(app_handle, &render_cache_key)
-        .map_err(|error| {
-            eprintln!("Failed to load cached render: {error}");
-            error
-        })
-        .ok()
-        .flatten();
-
-    Ok(MarkdownResponse {
-        content,
-        path: Some(resolved_path.display().to_string()),
-        live_updates: true,
-        render_cache_key,
-        cached_html,
-    })
+    let loaded = markdown_source::read_markdown_file(&path)?;
+    let document = loaded.into_document();
+    state.replace_document(document.clone());
+    Ok(build_response(app_handle, document))
 }
 
 pub fn build_render_cache_key(path: Option<&Path>, content: &str) -> String {
     render_cache::build_cache_key(path, content)
 }
 
-fn non_flag_file_arg() -> Option<String> {
-    env::args().skip(1).find(|arg| !arg.starts_with("--"))
-}
+fn build_response(app_handle: &tauri::AppHandle, document: MarkdownDocument) -> MarkdownResponse {
+    let render_cache_key = build_render_cache_key(document.path.as_deref(), &document.content);
+    let cached_html = read_cached_html(app_handle, &render_cache_key);
 
-fn try_read_markdown(arg: &str) -> Result<(String, PathBuf), String> {
-    let candidates = candidate_paths(arg);
-    let mut attempted = Vec::new();
-
-    for path in &candidates {
-        attempted.push(path.display().to_string());
-        match fs::read_to_string(path) {
-            Ok(content) => {
-                let resolved_path = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-                return Ok((content, resolved_path));
-            }
-            Err(_) => continue,
-        }
-    }
-
-    Err(build_read_error(arg, &attempted))
-}
-
-fn candidate_paths(arg: &str) -> Vec<PathBuf> {
-    let input = PathBuf::from(arg);
-    let mut candidates = vec![input.clone()];
-
-    if input.is_relative() {
-        push_unique_candidate(
-            &mut candidates,
-            env::var("OWD").ok().map(|owd| PathBuf::from(owd).join(&input)),
-        );
-
-        push_unique_candidate(
-            &mut candidates,
-            env::var("APPIMAGE")
-                .ok()
-                .and_then(|appimage| PathBuf::from(appimage).parent().map(|path| path.join(&input))),
-        );
-
-        push_unique_candidate(
-            &mut candidates,
-            env::current_exe()
-                .ok()
-                .and_then(|exe| exe.parent().map(|path| path.join(&input))),
-        );
-    }
-
-    candidates
-}
-
-fn push_unique_candidate(candidates: &mut Vec<PathBuf>, candidate: Option<PathBuf>) {
-    if let Some(candidate) = candidate {
-        if !candidates.contains(&candidate) {
-            candidates.push(candidate);
-        }
+    MarkdownResponse {
+        content: document.content,
+        path: document.path.as_ref().map(|path| path.display().to_string()),
+        live_updates: document.path.is_some(),
+        render_cache_key,
+        cached_html,
     }
 }
 
-fn build_read_error(arg: &str, attempted: &[String]) -> String {
-    let cwd = env::current_dir()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| "<unknown>".to_string());
-    let owd = env::var("OWD").unwrap_or_else(|_| "<unset>".to_string());
-    let appimage = env::var("APPIMAGE").unwrap_or_else(|_| "<unset>".to_string());
-    let exe = env::current_exe()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| "<unknown>".to_string());
-
-    format!(
-        "# Error\nCould not read markdown file `{}`.\n\nTried paths:\n{}\n\nCurrent working directory:\n`{}`\n\nOWD:\n`{}`\n\nAPPIMAGE:\n`{}`\n\nExecutable path:\n`{}`\n",
-        arg,
-        attempted
-            .iter()
-            .map(|path| format!("- `{}`", path))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        cwd,
-        owd,
-        appimage,
-        exe
-    )
+fn read_cached_html(app_handle: &tauri::AppHandle, render_cache_key: &str) -> Option<String> {
+    render_cache::read(app_handle, render_cache_key)
+        .map_err(|error| {
+            eprintln!("Failed to load cached render: {error}");
+            error
+        })
+        .ok()
+        .flatten()
 }

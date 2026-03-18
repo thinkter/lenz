@@ -1,13 +1,19 @@
-import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import "katex/dist/katex.min.css";
 
 import { createLazyFullRenderPlan, type LazyFullRenderPlan } from "./parser";
 import { measureAsync, measureSync, recordPerf, resetPerfCycle } from "./perf";
 import { markdownWorkerClient } from "./workerClient";
+import {
+  MARKDOWN_UPDATE_EVENT_NAMES,
+  loadInitialMarkdownPayload,
+  persistRenderedMarkdownHtml,
+  openMarkdownPayload,
+} from "./markdownIpc";
+import { extractMarkdownPayload, type MarkdownPayload } from "./markdownPayload";
+import { createRenderSessionState } from "./renderSessionState";
 
 const MARKDOWN_CONTAINER_SELECTOR = "#markdown-body";
-const MARKDOWN_UPDATE_EVENT_NAMES = ["markdown-updated", "markdown_updated"];
 const CHUNK_ATTRIBUTE_NAME = "data-markdown-chunk";
 const PREVIEW_CHUNK_CLASS_NAME = "markdown-chunk--preview";
 const UPGRADE_ROOT_MARGIN = "125% 0px";
@@ -20,24 +26,8 @@ type RenderPlan = {
   renderChunk(index: number): string;
 };
 
-let lastRenderedContent: string | null = null;
-let lastRenderedCacheKey: string | null = null;
-let pendingContent: string | null = null;
-let pendingCacheKey: string | null = null;
-let pendingCachedHtml: string | null = null;
-let pendingRenderFrameId: number | null = null;
-let activeRenderSessionId = 0;
-let fullPlanFrameId: number | null = null;
-let upgradeFrameId: number | null = null;
 let activeObserver: IntersectionObserver | null = null;
-let activeRenderCycleStart = 0;
-
-export type MarkdownPayload = {
-  content: string;
-  path?: string | null;
-  renderCacheKey: string;
-  cachedHtml: string | null;
-};
+const renderSession = createRenderSessionState();
 
 type ChunkBoundary = {
   start: Comment;
@@ -62,16 +52,16 @@ function getMarkdownContainer(): HTMLElement | null {
 }
 
 function clearScheduledFullPlan(): void {
-  if (fullPlanFrameId !== null) {
-    window.cancelAnimationFrame(fullPlanFrameId);
-    fullPlanFrameId = null;
+  if (renderSession.fullPlanFrameId !== null) {
+    window.cancelAnimationFrame(renderSession.fullPlanFrameId);
+    renderSession.fullPlanFrameId = null;
   }
 }
 
 function clearUpgradeScheduler(): void {
-  if (upgradeFrameId !== null) {
-    window.cancelAnimationFrame(upgradeFrameId);
-    upgradeFrameId = null;
+  if (renderSession.upgradeFrameId !== null) {
+    window.cancelAnimationFrame(renderSession.upgradeFrameId);
+    renderSession.upgradeFrameId = null;
   }
 
   if (activeObserver) {
@@ -83,18 +73,16 @@ function clearUpgradeScheduler(): void {
 }
 
 function resetPendingRender(): void {
-  if (pendingRenderFrameId !== null) {
-    window.cancelAnimationFrame(pendingRenderFrameId);
-    pendingRenderFrameId = null;
+  if (renderSession.pendingRenderFrameId !== null) {
+    window.cancelAnimationFrame(renderSession.pendingRenderFrameId);
+    renderSession.pendingRenderFrameId = null;
   }
 
-  pendingContent = null;
-  pendingCacheKey = null;
-  pendingCachedHtml = null;
+  renderSession.pending = null;
 }
 
 function resetRenderSession(): void {
-  activeRenderSessionId += 1;
+  renderSession.activeRenderSessionId += 1;
   clearScheduledFullPlan();
   clearUpgradeScheduler();
   resetPendingRender();
@@ -102,52 +90,12 @@ function resetRenderSession(): void {
 
 function renderMarkdownError(error: unknown): void {
   resetRenderSession();
-  lastRenderedContent = null;
-  lastRenderedCacheKey = null;
+  renderSession.lastRenderedContent = null;
+  renderSession.lastRenderedCacheKey = null;
 
   const container = getMarkdownContainer();
   if (!container) return;
   container.innerHTML = `<p style="color: red;">Error failed to load markdown: ${error}</p>`;
-}
-
-function extractMarkdownPayload(payload: unknown): MarkdownPayload | null {
-  if (typeof payload === "string") {
-    return {
-      content: payload,
-      path: null,
-      renderCacheKey: `memory:${payload.length}`,
-      cachedHtml: null,
-    };
-  }
-
-  if (payload && typeof payload === "object" && "content" in payload) {
-    const content = (payload as { content?: unknown }).content;
-    const renderCacheKey =
-      "render_cache_key" in payload &&
-      typeof (payload as { render_cache_key?: unknown }).render_cache_key === "string"
-        ? ((payload as { render_cache_key: string }).render_cache_key ?? "")
-        : "";
-
-    if (typeof content === "string" && renderCacheKey.length > 0) {
-      const cachedHtml =
-        "cached_html" in payload &&
-        typeof (payload as { cached_html?: unknown }).cached_html === "string"
-          ? ((payload as { cached_html?: string }).cached_html ?? null)
-          : null;
-
-      return {
-        content,
-        path:
-          "path" in payload && typeof (payload as { path?: unknown }).path === "string"
-            ? ((payload as { path?: string }).path ?? null)
-            : null,
-        renderCacheKey,
-        cachedHtml,
-      };
-    }
-  }
-
-  return null;
 }
 
 function createChunkFragment(index: number, html: string, preview: boolean): DocumentFragment {
@@ -189,8 +137,8 @@ function applyRenderedHtml(content: string, cacheKey: string, html: string): voi
   const template = document.createElement("template");
   template.innerHTML = html;
   container.replaceChildren(template.content.cloneNode(true));
-  lastRenderedContent = content;
-  lastRenderedCacheKey = cacheKey;
+  renderSession.lastRenderedContent = content;
+  renderSession.lastRenderedCacheKey = cacheKey;
 }
 
 function renderChunkHtml(
@@ -245,8 +193,8 @@ function applyInitialChunks(
   }
 
   container.replaceChildren(fragment);
-  lastRenderedContent = content;
-  lastRenderedCacheKey = cacheKey;
+  renderSession.lastRenderedContent = content;
+  renderSession.lastRenderedCacheKey = cacheKey;
   return boundaries;
 }
 
@@ -287,11 +235,7 @@ async function persistRenderedHtml(cacheKey: string): Promise<void> {
   try {
     await measureAsync(
       "persist-cache",
-      () =>
-        invoke("set_render_cache", {
-          cacheKey,
-          html: serializeContainerHtml(container),
-        }),
+      () => persistRenderedMarkdownHtml(cacheKey, serializeContainerHtml(container)),
       { htmlLength: container.innerHTML.length },
     );
   } catch (error) {
@@ -300,12 +244,12 @@ async function persistRenderedHtml(cacheKey: string): Promise<void> {
 }
 
 function scheduleUpgradeFrame(): void {
-  if (upgradeFrameId !== null || activeProgressiveRenderState === null) {
+  if (renderSession.upgradeFrameId !== null || activeProgressiveRenderState === null) {
     return;
   }
 
-  upgradeFrameId = window.requestAnimationFrame(() => {
-    upgradeFrameId = null;
+  renderSession.upgradeFrameId = window.requestAnimationFrame(() => {
+    renderSession.upgradeFrameId = null;
 
     const state = activeProgressiveRenderState;
     if (!state) {
@@ -371,7 +315,7 @@ function scheduleUpgradeFrame(): void {
 
     if (state.upgradedIndexes.size === state.fullPlan.chunkCount) {
       const cacheKey = state.cacheKey;
-      recordPerf("render-cycle", performance.now() - activeRenderCycleStart, {
+      recordPerf("render-cycle", performance.now() - renderSession.activeRenderCycleStart, {
         chunkCount: state.fullPlan.chunkCount,
         kind: "progressive-complete",
       });
@@ -476,10 +420,10 @@ function scheduleFullUpgrade(
   fullPlan: RenderPlan,
   chunkBoundaries: ChunkBoundary[],
 ): void {
-  fullPlanFrameId = window.requestAnimationFrame(() => {
-    fullPlanFrameId = window.requestAnimationFrame(() => {
-      fullPlanFrameId = null;
-      if (sessionId !== activeRenderSessionId) {
+  renderSession.fullPlanFrameId = window.requestAnimationFrame(() => {
+    renderSession.fullPlanFrameId = window.requestAnimationFrame(() => {
+      renderSession.fullPlanFrameId = null;
+      if (sessionId !== renderSession.activeRenderSessionId) {
         return;
       }
 
@@ -508,22 +452,24 @@ async function buildRenderPlan(content: string): Promise<RenderPlan> {
 }
 
 async function flushPendingRender(): Promise<void> {
-  pendingRenderFrameId = null;
+  renderSession.pendingRenderFrameId = null;
   resetPerfCycle();
-  activeRenderCycleStart = performance.now();
+  renderSession.activeRenderCycleStart = performance.now();
 
-  const content = pendingContent;
-  const cacheKey = pendingCacheKey;
-  const cachedHtml = pendingCachedHtml;
-  pendingContent = null;
-  pendingCacheKey = null;
-  pendingCachedHtml = null;
+  const pending = renderSession.pending;
+  renderSession.pending = null;
+  const content = pending?.content ?? null;
+  const cacheKey = pending?.cacheKey ?? null;
+  const cachedHtml = pending?.cachedHtml ?? null;
   if (content === null || cacheKey === null) {
     return;
   }
 
-  if (content === lastRenderedContent && cacheKey === lastRenderedCacheKey) {
-    recordPerf("render-cycle", performance.now() - activeRenderCycleStart, {
+  if (
+    content === renderSession.lastRenderedContent &&
+    cacheKey === renderSession.lastRenderedCacheKey
+  ) {
+    recordPerf("render-cycle", performance.now() - renderSession.activeRenderCycleStart, {
       kind: "skipped-identical",
     });
     return;
@@ -532,15 +478,15 @@ async function flushPendingRender(): Promise<void> {
   if (cachedHtml !== null) {
     recordPerf("cache-hit", 0, { htmlLength: cachedHtml.length });
     applyRenderedHtml(content, cacheKey, cachedHtml);
-    recordPerf("render-cycle", performance.now() - activeRenderCycleStart, {
+    recordPerf("render-cycle", performance.now() - renderSession.activeRenderCycleStart, {
       kind: "cached-html",
     });
     return;
   }
 
-  const sessionId = activeRenderSessionId;
+  const sessionId = renderSession.activeRenderSessionId;
   const fullPlan = await buildRenderPlan(content);
-  if (sessionId !== activeRenderSessionId) {
+  if (sessionId !== renderSession.activeRenderSessionId) {
     return;
   }
 
@@ -550,7 +496,7 @@ async function flushPendingRender(): Promise<void> {
     { chunkCount: fullPlan.chunkCount },
   );
   if (chunkBoundaries.length === 0) {
-    recordPerf("render-cycle", performance.now() - activeRenderCycleStart, {
+    recordPerf("render-cycle", performance.now() - renderSession.activeRenderCycleStart, {
       kind: "empty",
     });
     return;
@@ -565,18 +511,16 @@ export function renderMarkdownContent(
   cachedHtml: string | null = null,
 ): void {
   if (
-    content === lastRenderedContent &&
-    renderCacheKey === lastRenderedCacheKey &&
-    pendingRenderFrameId === null
+    content === renderSession.lastRenderedContent &&
+    renderCacheKey === renderSession.lastRenderedCacheKey &&
+    renderSession.pendingRenderFrameId === null
   ) {
     return;
   }
 
   resetRenderSession();
-  pendingContent = content;
-  pendingCacheKey = renderCacheKey;
-  pendingCachedHtml = cachedHtml;
-  pendingRenderFrameId = window.requestAnimationFrame(() => {
+  renderSession.pending = { content, cacheKey: renderCacheKey, cachedHtml };
+  renderSession.pendingRenderFrameId = window.requestAnimationFrame(() => {
     void flushPendingRender();
   });
 }
@@ -587,12 +531,7 @@ export async function loadInitialMarkdown(): Promise<void> {
 
 export async function loadInitialMarkdownState(): Promise<MarkdownPayload> {
   try {
-    const payload = await measureAsync("load-invoke", () => invoke<unknown>("get_markdown"));
-    const markdown = extractMarkdownPayload(payload);
-    if (markdown === null) {
-      throw new Error("Unexpected payload from get_markdown");
-    }
-
+    const markdown = await loadInitialMarkdownPayload();
     renderMarkdownContent(markdown.content, markdown.renderCacheKey, markdown.cachedHtml);
     return markdown;
   } catch (error) {
@@ -603,12 +542,7 @@ export async function loadInitialMarkdownState(): Promise<MarkdownPayload> {
 }
 
 export async function openMarkdownFile(path: string): Promise<MarkdownPayload> {
-  const payload = await invoke<unknown>("open_file", { path });
-  const markdown = extractMarkdownPayload(payload);
-  if (markdown === null) {
-    throw new Error("Unexpected payload from open_file");
-  }
-
+  const markdown = await openMarkdownPayload(path);
   renderMarkdownContent(markdown.content, markdown.renderCacheKey, markdown.cachedHtml);
   return markdown;
 }

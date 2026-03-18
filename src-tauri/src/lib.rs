@@ -1,5 +1,7 @@
 mod launcher;
 mod markdown;
+mod markdown_source;
+mod markdown_state;
 mod render_cache;
 mod settings;
 mod watcher;
@@ -57,11 +59,11 @@ pub fn run() {
         Err(error) => eprintln!("{error}"),
     }
 
-    let markdown_state = markdown::create_state(markdown::load_from_cli());
-    let watcher_state = markdown_state.clone();
+    let shared_markdown_state = markdown::create_state(markdown::load_from_cli());
+    let watcher_state = shared_markdown_state.clone();
 
     build_app()
-        .manage(markdown_state)
+        .manage(shared_markdown_state)
         .invoke_handler(tauri::generate_handler![
             get_markdown,
             open_file,

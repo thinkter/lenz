@@ -2,7 +2,7 @@ use crate::markdown::MarkdownState;
 use crate::markdown::build_render_cache_key;
 use serde::Serialize;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 use tauri::Emitter;
@@ -26,11 +26,11 @@ struct MarkdownWatchErrorEvent {
 
 pub fn start(app_handle: tauri::AppHandle, state: MarkdownState) {
     thread::spawn(move || {
-        let mut watched_path: Option<PathBuf> = None;
+        let mut watched_path = None;
         let mut last_error: Option<String> = None;
 
         loop {
-            let current_path = state.0.path.lock().unwrap().clone();
+            let current_path = state.current_path();
 
             if current_path != watched_path {
                 watched_path = current_path.clone();
@@ -64,18 +64,15 @@ fn sync_markdown_content(
     target_path: &Path,
     updated_content: String,
 ) {
-    let mut current_content = state.0.content.lock().unwrap();
-    if *current_content == updated_content {
+    if !state.set_content_if_changed(&updated_content) {
         return;
     }
 
-    *current_content = updated_content.clone();
-    drop(current_content);
-
+    let render_cache_key = build_render_cache_key(Some(target_path), &updated_content);
     let payload = MarkdownUpdatedEvent {
-        content: updated_content.clone(),
+        content: updated_content,
         path: target_path.display().to_string(),
-        render_cache_key: build_render_cache_key(Some(target_path), &updated_content),
+        render_cache_key,
     };
     let _ = app_handle.emit(MARKDOWN_UPDATED_EVENT, payload);
 }

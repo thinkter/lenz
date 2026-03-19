@@ -78,6 +78,3 @@ cargo check --manifest-path src-tauri/Cargo.toml
 bun run tauri build
 ```
 
-## Release
-
-Tagging `vX.Y.Z` publishes the native release artifacts. If `NPM_TOKEN` is configured in GitHub Actions secrets, the same tag also publishes the npm package for that version.

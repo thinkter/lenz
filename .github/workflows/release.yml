@@ -8,8 +8,13 @@ on:
     inputs:
       release_version:
         description: Version to publish without the leading v, for example 0.1.1
-        required: false
+        required: true
         type: string
+      npm_only:
+        description: Publish only the npm package and skip native release builds
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -20,6 +25,7 @@ concurrency:
 
 jobs:
   publish-tauri:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.npm_only)
     name: ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -84,7 +90,6 @@ jobs:
             wget
 
       - name: Sync app version from release tag
-        if: github.event_name == 'push' || inputs.release_version != ''
         shell: bash
         env:
           RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.release_version) }}
@@ -113,7 +118,6 @@ jobs:
           args: ${{ matrix.args }}
 
       - name: Package npm runtime asset
-        if: github.event_name == 'push' || inputs.release_version != ''
         shell: bash
         env:
           RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.release_version) }}
@@ -145,7 +149,6 @@ jobs:
           esac
 
       - name: Upload npm runtime asset
-        if: github.event_name == 'push' || inputs.release_version != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.release_version) }}
@@ -153,10 +156,10 @@ jobs:
 
   publish-npm:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: publish-tauri
     runs-on: ubuntu-22.04
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - name: Checkout
@@ -165,11 +168,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
       - name: Sync package version from release tag
-        if: github.event_name == 'push' || inputs.release_version != ''
         shell: bash
         env:
           RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.release_version) }}
@@ -178,5 +180,4 @@ jobs:
           node ./scripts/sync-version.mjs "${RELEASE_VERSION#v}"
 
       - name: Publish npm package
-        if: env.NODE_AUTH_TOKEN != ''
         run: npm publish --access public

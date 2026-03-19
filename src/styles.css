@@ -78,8 +78,31 @@ body {
   contain: layout paint;
 }
 
+.scroll-progress-indicator {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 999;
+  min-width: 72px;
+  padding: 4px 8px;
+  border: 1px solid #3d3d3d;
+  border-radius: 4px;
+  background-color: rgba(10, 10, 10, 0.92);
+  color: #f0f0f0;
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+}
+
 @media (max-width: 767px) {
   .markdown-body {
     padding: 15px;
+  }
+
+  .scroll-progress-indicator {
+    left: 8px;
+    bottom: 8px;
   }
 }

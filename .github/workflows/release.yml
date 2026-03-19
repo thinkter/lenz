@@ -5,6 +5,11 @@ on:
     tags:
       - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: Version to publish without the leading v, for example 0.1.1
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -79,10 +84,10 @@ jobs:
             wget
 
       - name: Sync app version from release tag
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.release_version != ''
         shell: bash
         env:
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.release_version) }}
         run: |
           set -euo pipefail
           node ./scripts/sync-version.mjs "${RELEASE_VERSION#v}"
@@ -95,8 +100,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.event_name == 'push' && github.ref_name || 'v__VERSION__' }}
-          releaseName: "Lenz ${{ github.event_name == 'push' && github.ref_name || 'v__VERSION__' }}"
+          tagName: ${{ github.event_name == 'push' && github.ref_name || inputs.release_version != '' && format('v{0}', inputs.release_version) || 'v__VERSION__' }}
+          releaseName: "Lenz ${{ github.event_name == 'push' && github.ref_name || inputs.release_version != '' && format('v{0}', inputs.release_version) || 'v__VERSION__' }}"
           releaseBody: |
             Download the installer or bundle for your platform from the assets below.
           releaseDraft: false
@@ -108,10 +113,10 @@ jobs:
           args: ${{ matrix.args }}
 
       - name: Package npm runtime asset
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.release_version != ''
         shell: bash
         env:
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.release_version) }}
           NPM_ASSET_SUFFIX: ${{ matrix.npm_asset_suffix }}
           TARGET_TRIPLE: ${{ matrix.target_triple }}
         run: |
@@ -140,16 +145,18 @@ jobs:
           esac
 
       - name: Upload npm runtime asset
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.release_version != ''
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.release_version) }}
           files: ${{ runner.temp }}/npm-assets/*
 
   publish-npm:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: publish-tauri
     runs-on: ubuntu-22.04
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     steps:
       - name: Checkout
@@ -162,9 +169,10 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Sync package version from release tag
+        if: github.event_name == 'push' || inputs.release_version != ''
         shell: bash
         env:
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.release_version) }}
         run: |
           set -euo pipefail
           node ./scripts/sync-version.mjs "${RELEASE_VERSION#v}"
@@ -172,5 +180,3 @@ jobs:
       - name: Publish npm package
         if: env.NODE_AUTH_TOKEN != ''
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,15 +1,17 @@
 # Lenz
 
 Native desktop Markdown preview from your terminal (Tauri + TypeScript).
+<img width="1920" height="1200" alt="image" src="https://github.com/user-attachments/assets/26003195-c0f5-4ffb-a5e1-7a3318e1f6c6" />
+
+
 
 ## Features
-
-- Open a Markdown file as a native window: `lenz path/to/file.md`
-- Live reload on save (when a file path is provided)
+- Live reload
 - KaTeX math via `$$ ... $$`
 - Full CommonMark support thanks to markdown-it
-- Scroll: mouse/trackpad or `j` / `k`
-- Zoom: `Ctrl/Cmd +` and `Ctrl/Cmd -` 
+- Vim Motions like `j`, `k`, `gg`, `G`
+- Zoom: `Ctrl/Cmd +` and `Ctrl/Cmd -`
+- Press `o` for the file picker
 
 ## Install
 

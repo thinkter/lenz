@@ -70,6 +70,57 @@ jobs:
             patchelf \
             wget
 
+      - name: Sync app version from release tag
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_VERSION#v}"
+          export VERSION
+          bun -e '
+            const fs = require("fs");
+
+            const version = process.env.VERSION;
+            if (!version) throw new Error("VERSION is missing");
+
+            const updateJsonVersion = (file) => {
+              const raw = fs.readFileSync(file, "utf8");
+              const json = JSON.parse(raw);
+              json.version = version;
+              fs.writeFileSync(file, `${JSON.stringify(json, null, 2)}\n`);
+            };
+
+            updateJsonVersion("package.json");
+            updateJsonVersion("src-tauri/tauri.conf.json");
+
+            const cargoPath = "src-tauri/Cargo.toml";
+            const lines = fs.readFileSync(cargoPath, "utf8").split("\n");
+            let inPackage = false;
+            let updated = false;
+
+            for (let i = 0; i < lines.length; i += 1) {
+              const line = lines[i];
+              if (/^\s*\[.*\]\s*$/.test(line)) {
+                inPackage = /^\s*\[package\]\s*$/.test(line);
+                continue;
+              }
+
+              if (inPackage && /^\s*version\s*=\s*".*"\s*$/.test(line)) {
+                lines[i] = `version = "${version}"`;
+                updated = true;
+                break;
+              }
+            }
+
+            if (!updated) {
+              throw new Error("Could not update version in src-tauri/Cargo.toml [package] section");
+            }
+
+            fs.writeFileSync(cargoPath, `${lines.join("\n")}\n`);
+          '
+
       - name: Install frontend deps
         run: bun install --frozen-lockfile
 

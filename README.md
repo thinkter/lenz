@@ -1,6 +1,6 @@
 # Lenz
 
-Native desktop Markdown preview from your terminal (Tauri + TypeScript).
+Native desktop Markdown preview (Tauri + TypeScript).
 <img width="1920" height="1200" alt="image" src="https://github.com/user-attachments/assets/26003195-c0f5-4ffb-a5e1-7a3318e1f6c6" />
 
 

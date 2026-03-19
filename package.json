@@ -1,8 +1,16 @@
 {
-  "name": "lenz",
-  "private": true,
+  "name": "lenz-md",
   "version": "0.1.0",
+  "description": "Native desktop Markdown preview that installs a platform-specific Lenz build from GitHub Releases.",
   "type": "module",
+  "bin": {
+    "lenz": "./bin/lenz.js"
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "README.md"
+  ],
   "scripts": {
     "dev": "vite",
     "dev:app": "tauri dev -- -- test/short.md",
@@ -12,20 +20,34 @@
     "dev:app:math": "tauri dev -- -- test/math.md",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "postinstall": "node ./scripts/npm-install.mjs",
+    "sync:version": "node ./scripts/sync-version.mjs"
   },
-  "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-dialog": "^2",
-    "@tauri-apps/plugin-opener": "^2",
-    "github-markdown-css": "^5.9.0",
-    "katex": "^0.16.11",
-    "markdown-it": "^14.1.1",
-    "markdown-it-texmath": "^1.0.0"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thinkter/lenz.git"
+  },
+  "homepage": "https://github.com/thinkter/lenz#readme",
+  "bugs": {
+    "url": "https://github.com/thinkter/lenz/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "devDependencies": {
+    "@tauri-apps/api": "^2",
     "@tauri-apps/cli": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-opener": "^2",
     "@types/markdown-it": "^14.1.2",
+    "katex": "^0.16.11",
+    "markdown-it": "^14.1.1",
+    "markdown-it-texmath": "^1.0.0",
+    "github-markdown-css": "^5.9.0",
     "typescript": "~5.6.2",
     "vite": "^6.0.3"
   }

@@ -23,15 +23,23 @@ jobs:
           - name: Linux
             runner: ubuntu-22.04
             args: ""
+            npm_asset_suffix: linux-x64
+            target_triple: ""
           - name: Windows
             runner: windows-latest
             args: ""
+            npm_asset_suffix: windows-x64
+            target_triple: ""
           - name: macOS Apple Silicon
             runner: macos-latest
             args: "--target aarch64-apple-darwin"
+            npm_asset_suffix: macos-arm64
+            target_triple: aarch64-apple-darwin
           - name: macOS Intel
             runner: macos-latest
             args: "--target x86_64-apple-darwin"
+            npm_asset_suffix: macos-x64
+            target_triple: x86_64-apple-darwin
 
     runs-on: ${{ matrix.runner }}
 
@@ -77,49 +85,7 @@ jobs:
           RELEASE_VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${RELEASE_VERSION#v}"
-          export VERSION
-          bun -e '
-            const fs = require("fs");
-
-            const version = process.env.VERSION;
-            if (!version) throw new Error("VERSION is missing");
-
-            const updateJsonVersion = (file) => {
-              const raw = fs.readFileSync(file, "utf8");
-              const json = JSON.parse(raw);
-              json.version = version;
-              fs.writeFileSync(file, `${JSON.stringify(json, null, 2)}\n`);
-            };
-
-            updateJsonVersion("package.json");
-            updateJsonVersion("src-tauri/tauri.conf.json");
-
-            const cargoPath = "src-tauri/Cargo.toml";
-            const lines = fs.readFileSync(cargoPath, "utf8").split("\n");
-            let inPackage = false;
-            let updated = false;
-
-            for (let i = 0; i < lines.length; i += 1) {
-              const line = lines[i];
-              if (/^\s*\[.*\]\s*$/.test(line)) {
-                inPackage = /^\s*\[package\]\s*$/.test(line);
-                continue;
-              }
-
-              if (inPackage && /^\s*version\s*=\s*".*"\s*$/.test(line)) {
-                lines[i] = `version = "${version}"`;
-                updated = true;
-                break;
-              }
-            }
-
-            if (!updated) {
-              throw new Error("Could not update version in src-tauri/Cargo.toml [package] section");
-            }
-
-            fs.writeFileSync(cargoPath, `${lines.join("\n")}\n`);
-          '
+          node ./scripts/sync-version.mjs "${RELEASE_VERSION#v}"
 
       - name: Install frontend deps
         run: bun install --frozen-lockfile
@@ -140,3 +106,70 @@ jobs:
           releaseAssetNamePattern: "[name]_[version]_[platform]_[arch][setup][ext]"
           uploadWorkflowArtifacts: true
           args: ${{ matrix.args }}
+
+      - name: Package npm runtime asset
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          NPM_ASSET_SUFFIX: ${{ matrix.npm_asset_suffix }}
+          TARGET_TRIPLE: ${{ matrix.target_triple }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_VERSION#v}"
+          OUT_DIR="${RUNNER_TEMP}/npm-assets"
+          mkdir -p "${OUT_DIR}"
+
+          case "${NPM_ASSET_SUFFIX}" in
+            linux-x64)
+              SOURCE_PATH="$(find src-tauri/target -type f -path '*bundle/appimage/*.AppImage' | head -n 1)"
+              cp "${SOURCE_PATH}" "${OUT_DIR}/lenz-v${VERSION}-${NPM_ASSET_SUFFIX}.AppImage"
+              chmod +x "${OUT_DIR}/lenz-v${VERSION}-${NPM_ASSET_SUFFIX}.AppImage"
+              ;;
+            windows-x64)
+              cp "src-tauri/target/release/lenz.exe" "${OUT_DIR}/lenz-v${VERSION}-${NPM_ASSET_SUFFIX}.exe"
+              ;;
+            macos-*)
+              APP_PATH="src-tauri/target/${TARGET_TRIPLE}/release/bundle/macos/lenz.app"
+              tar -czf "${OUT_DIR}/lenz-v${VERSION}-${NPM_ASSET_SUFFIX}.app.tar.gz" -C "$(dirname "${APP_PATH}")" "$(basename "${APP_PATH}")"
+              ;;
+            *)
+              echo "Unknown npm asset suffix: ${NPM_ASSET_SUFFIX}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Upload npm runtime asset
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: ${{ runner.temp }}/npm-assets/*
+
+  publish-npm:
+    if: github.event_name == 'push' && secrets.NPM_TOKEN != ''
+    needs: publish-tauri
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Sync package version from release tag
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          node ./scripts/sync-version.mjs "${RELEASE_VERSION#v}"
+
+      - name: Publish npm package
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

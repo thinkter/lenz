@@ -15,7 +15,21 @@ Native desktop Markdown preview (Tauri + TypeScript).
 
 ## Install
 
-- Download the latest build from GitHub Releases (Windows installer, macOS `.app`, Linux AppImage/bundles): [`releases/latest`](../../releases/latest)
+- Global CLI via npm:
+
+```bash
+npm install -g lenz-md
+lenz notes.md
+```
+
+- One-off run without a global install:
+
+```bash
+npx lenz-md notes.md
+```
+
+- The npm package downloads the matching native build for your OS from GitHub Releases during installation.
+- Manual download is still available from [`releases/latest`](../../releases/latest).
 - Or build from source (see Development).
 
 ## Usage
@@ -23,6 +37,8 @@ Native desktop Markdown preview (Tauri + TypeScript).
 ```bash
 lenz notes.md
 ```
+
+If you installed the package locally instead of globally, run it with `npx lenz notes.md`.
 
 ## Development
 
@@ -61,3 +77,7 @@ bun run build
 cargo check --manifest-path src-tauri/Cargo.toml
 bun run tauri build
 ```
+
+## Release
+
+Tagging `vX.Y.Z` publishes the native release artifacts. If `NPM_TOKEN` is configured in GitHub Actions secrets, the same tag also publishes the npm package for that version.

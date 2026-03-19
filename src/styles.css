@@ -28,25 +28,6 @@ body {
   overflow-y: auto;
 }
 
-.open-file-button {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 10;
-  border: 1px solid #2b2b2b;
-  border-radius: 999px;
-  padding: 0.6rem 0.95rem;
-  background: rgba(16, 16, 16, 0.94);
-  color: var(--color-fg-default);
-  font: inherit;
-  cursor: pointer;
-}
-
-.open-file-button:disabled {
-  cursor: wait;
-  opacity: 0.7;
-}
-
 .markdown-body {
   box-sizing: border-box;
   width: min(100%, var(--content-max-width));

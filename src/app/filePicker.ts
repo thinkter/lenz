@@ -1,24 +1,21 @@
 import { open } from "@tauri-apps/plugin-dialog";
 
-const OPEN_FILE_BUTTON_SELECTOR = "#open-file-button";
-
 type OpenMarkdownFile = (path: string) => Promise<unknown>;
 
-function getOpenFileButton(): HTMLButtonElement | null {
-  return document.querySelector(OPEN_FILE_BUTTON_SELECTOR) as HTMLButtonElement | null;
-}
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
 
-function setOpenButtonState(button: HTMLButtonElement, isBusy: boolean): void {
-  button.disabled = isBusy;
-  button.textContent = isBusy ? "Opening..." : "Open file";
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select";
 }
 
 export function initializeFilePicker(openMarkdownFile: OpenMarkdownFile): () => void {
-  const button = getOpenFileButton();
-  if (!button) {
-    return () => {};
-  }
-
   let isOpenDialogActive = false;
 
   const promptForFile = async (): Promise<void> => {
@@ -27,7 +24,6 @@ export function initializeFilePicker(openMarkdownFile: OpenMarkdownFile): () => 
     }
 
     isOpenDialogActive = true;
-    setOpenButtonState(button, true);
 
     try {
       const selection = await open({
@@ -43,17 +39,29 @@ export function initializeFilePicker(openMarkdownFile: OpenMarkdownFile): () => 
       console.error("Failed to open file:", error);
     } finally {
       isOpenDialogActive = false;
-      setOpenButtonState(button, false);
     }
   };
 
-  const onOpenFileClick = (): void => {
+  const onKeydown = (event: KeyboardEvent): void => {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+
+    if (isEditableTarget(event.target)) {
+      return;
+    }
+
+    if (event.key !== "o") {
+      return;
+    }
+
+    event.preventDefault();
     void promptForFile();
   };
 
-  button.addEventListener("click", onOpenFileClick);
+  window.addEventListener("keydown", onKeydown);
 
   return () => {
-    button.removeEventListener("click", onOpenFileClick);
+    window.removeEventListener("keydown", onKeydown);
   };
 }

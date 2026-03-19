@@ -147,7 +147,7 @@ jobs:
           files: ${{ runner.temp }}/npm-assets/*
 
   publish-npm:
-    if: github.event_name == 'push' && secrets.NPM_TOKEN != ''
+    if: github.event_name == 'push'
     needs: publish-tauri
     runs-on: ubuntu-22.04
 
@@ -170,6 +170,7 @@ jobs:
           node ./scripts/sync-version.mjs "${RELEASE_VERSION#v}"
 
       - name: Publish npm package
+        if: env.NODE_AUTH_TOKEN != ''
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

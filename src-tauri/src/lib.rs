@@ -7,6 +7,7 @@ mod settings;
 mod watcher;
 
 use markdown::MarkdownState;
+use std::env;
 use tauri::State;
 
 #[tauri::command]
@@ -51,8 +52,25 @@ fn build_app() -> tauri::Builder<tauri::Wry> {
         .plugin(tauri_plugin_opener::init())
 }
 
+fn configure_linux_webkit_runtime() {
+    #[cfg(target_os = "linux")]
+    {
+        // Some Linux WebKitGTK setups render a permanently black/blank webview
+        // when accelerated compositing or DMA-BUF rendering is enabled.
+        if env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+            env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        }
+
+        if env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    configure_linux_webkit_runtime();
+
     match launcher::detach_to_background() {
         Ok(true) => return,
         Ok(false) => {}

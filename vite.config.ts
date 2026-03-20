@@ -6,6 +6,9 @@ const devHost = host || "127.0.0.1";
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  // Use relative asset URLs in production bundles so Tauri/AppImage can
+  // resolve frontend files reliably across Linux desktop environments.
+  base: "./",
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
